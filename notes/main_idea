@@ -1,0 +1,63 @@
+Three subsequent models:
+
+1) Contractive Recurrent Classifier with Earliest Certified Winner (fixed global contractive parameter kappa)
+2) CRC with Earliest Certified Winner (with trainable kappa that keeps contraction invariant)
+3) Sparse CRC with Earliest Certified Winner (trained with DeepR-base sparsity) <-- most important and necessary to have topology evolve
+
+------- FIRST MODEL --------
+
+Fixed "Params":
+- d: d-dimensional input vector, represented by d input nodes in a vector
+- K: K classes, represented by K output nodes in a vector
+- V: an n vector ReLU "internal" nodes (n is the size)
+
+
+
+Hyperparams:
+- K_W: n by n adjacency matrix for connections, {0,1} values (self edges allowed here)
+- K_I: d by n adjacency matrix, representing edges from the input nodes to the internal nodes
+- K_O: n by K adjacency matrix, repredeting edges from the internal nodes ot the output nodes 
+
+- κ: paramater representing dampening 0 < κ < 1 (for now fixed)
+- c: contraction factor for paramaterization of matrix 
+- ε: small fixed value for paramaterization of matrix
+
+
+
+Learnable Params:
+- A: n by n free real matrix (used to create intermediate edge weights)
+- I_raw: d by n free real matrix (for input edge weights)
+- O_raw: n by K free real matrix (for output edge weights)
+- b: n vector corresponding to biases (indexed corresponding to V)
+
+
+
+Constructions:
+- A* : A ⊙ K_W (element wise multiplication) 
+- W = c * diag(1/(|A*|1 + ε))A* : Weight Matrix for internal nodes (|A*|1 = absolute row  sums vector, 1 here is all ones column vector)
+- I = I_raw ⊙ K_I
+- O = O_raw ⊙ K_O
+- ρ = (1 - κ) + κc (valid contraction factor, not necessarily tight)
+
+
+
+State:
+- x: fixed input
+- h_t: hidden state corresponding to potentials, an n vector (indexed corresponding to V), at step t. Initialized to 0 at step 0
+- h_{t+1} = (1-κ)h_t + κ σ(h_tW + xI + b) : state update rule
+- z_t = h_t O : output logits 
+- T: final time step, specifically the first time step when lead(z_T) > 2 * ||O||_infty * ρ/(1-ρ)||h_T - h_{T-1}||_infty (lead is the margin between the winner and the runner up in z_T)
+
+Process:
+yhat : winner = argmax(z_T)
+
+each training run runs throught the full training set and does averaging of losses plus maintains maximum T, denoted T*
+
+at the end of the training run, we unrolls the graph with time of T^*, which guarantees that all behavior is identical along all training instances. Then, it backpropagates along this unrolled graph, updating the trainable paramaters accordingly. (prb will be the hardest part to implement). nvm i need to unroll first so ill do that to some max time T_max
+
+
+
+
+
+
+
