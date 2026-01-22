@@ -101,7 +101,7 @@ def run_training(
         device=cfg.device,
     )
 
-    # Allow manual override if you’re using a custom loader later
+    # Allow manual override if using a custom loader later
     input_dim_ = input_dim if input_dim is not None else ds.input_dim
     num_classes_ = num_classes if num_classes is not None else ds.num_classes
 
@@ -136,7 +136,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", type=str, default="mnist")
     parser.add_argument("--data-dir", type=str, default="./data")
 
-    # original training/model knobs you wanted to keep
+    # original training/model knobs
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--num-hidden-layers", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)

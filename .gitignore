@@ -7,3 +7,12 @@ data/MNIST/raw/t10k-labels-idx1-ubyte.gz
 data/MNIST/raw/t10k-labels-idx1-ubyte
 data/MNIST/raw/t10k-images-idx3-ubyte.gz
 data/MNIST/raw/t10k-images-idx3-ubyte
+src/data/__pycache__/datasets.cpython-314.pyc
+src/models/__pycache__/model_crp.cpython-314.pyc
+src/data/__pycache__/datasets.cpython-314.pyc
+src/training/__pycache__/train_crp.cpython-314.pyc
+src/training/__pycache__/train_mlp.cpython-314.pyc
+src/data/__pycache__/datasets.cpython-314.pyc
+src/training/__pycache__/train_mlp.cpython-314.pyc
+src/data/__pycache__/datasets.cpython-314.pyc
+*.pyc
