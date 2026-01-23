@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+from typing import Any, Dict, Tuple
+
 import torch
 import torch.nn as nn
+
 
 class MLPClassifier(nn.Module):
     """
     Baseline feedforward classifier.
 
-    Architecture:
-      x -> [Linear -> ReLU] * (num_hidden_layers) -> Linear -> logits
+    Standardized interface:
+      forward(x, return_aux=False) -> logits
+      forward(x, return_aux=True)  -> (logits, aux)
 
-    Notes:
-      - No activation on the final layer (logits).
-      - Use torch.nn.functional.cross_entropy(logits, y) for training (no softmax needed).
+    aux always contains:
+      - model_id: "mlp"
     """
+
+    MODEL_ID = "mlp"
 
     def __init__(
         self,
@@ -37,28 +42,43 @@ class MLPClassifier(nn.Module):
         layers: list[nn.Module] = []
 
         if num_hidden_layers == 0:
-            # Direct linear classifier
             layers.append(nn.Linear(input_dim, num_classes, bias=bias))
         else:
-            # First hidden layer (because it has input_dim dimensions)
             layers.append(nn.Linear(input_dim, hidden_dim, bias=bias))
             layers.append(nn.ReLU(inplace=False))
 
-            # Additional hidden layers
             for _ in range(num_hidden_layers - 1):
                 layers.append(nn.Linear(hidden_dim, hidden_dim, bias=bias))
                 layers.append(nn.ReLU(inplace=False))
 
-            # Output layer (logits)
             layers.append(nn.Linear(hidden_dim, num_classes, bias=bias))
 
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        x: [B, input_dim]
-        returns logits: [B, num_classes]
-        """
+        self.input_dim = int(input_dim)
+        self.num_classes = int(num_classes)
+        self.hidden_dim = int(hidden_dim)
+        self.num_hidden_layers = int(num_hidden_layers)
+        self.bias = bool(bias)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        return_aux: bool = False,
+    ) -> torch.Tensor | Tuple[torch.Tensor, Dict[str, Any]]:
         if x.dim() > 2:
             x = x.view(x.size(0), -1)
-        return self.net(x)
+
+        logits = self.net(x)
+
+        if not return_aux:
+            return logits
+
+        aux: Dict[str, Any] = {
+            "model_id": self.MODEL_ID,
+            # Optional metadata (cheap, sometimes useful)
+            "input_dim": self.input_dim,
+            "num_classes": self.num_classes,
+        }
+        return logits, aux
