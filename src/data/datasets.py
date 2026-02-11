@@ -1,3 +1,5 @@
+"""Dataset construction utilities and reproducible train/val/test splitting."""
+
 from __future__ import annotations
 
 from typing import Tuple, Optional
@@ -12,13 +14,24 @@ from .transforms import mnist_transform
 def make_mnist_splits(
     data_dir: str,
     val_size: int = 10_000,
-    seed: int = 0,
+    seed: Optional[int] = None,
 ) -> Tuple[Dataset, Dataset, Dataset, int, int]:
     """
-    Returns:
-      train_set, val_set, test_set, input_dim, num_classes
+    Build MNIST train, validation, and test splits with deterministic sampling.
 
-    - Uses random_split for train/val, but now with a seeded generator so the split is reproducible.
+    Inputs:
+    - data_dir: Root directory for torchvision dataset storage.
+    - val_size: Number of examples reserved from the official train set.
+    - seed: RNG seed used for ``random_split`` reproducibility.
+
+    Returns:
+    - ``(train_set, val_set, test_set, input_dim, num_classes)``.
+
+    Side effects:
+    - May download MNIST files when missing.
+
+    Assumptions:
+    - ``val_size`` is strictly positive and smaller than the train split size.
     """
     tfm = mnist_transform()
 
@@ -34,10 +47,12 @@ def make_mnist_splits(
             f"val_size={val_size} is too large for MNIST train set of size {len(full_train)}"
         )
 
-    g = torch.Generator()
-    g.manual_seed(seed)
+    generator = None
+    if seed is not None:
+        generator = torch.Generator()
+        generator.manual_seed(seed)
 
-    train_set, val_set = random_split(full_train, [train_size, val_size], generator=g)
+    train_set, val_set = random_split(full_train, [train_size, val_size], generator=generator)
 
     input_dim = 28 * 28
     num_classes = 10

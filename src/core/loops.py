@@ -1,3 +1,5 @@
+"""Reusable train and evaluation loops with standardized aux metric handling."""
+
 from __future__ import annotations
 
 from typing import Dict, Tuple
@@ -11,16 +13,21 @@ from .types import AuxDict
 
 @torch.no_grad()
 def accuracy(logits: torch.Tensor, y: torch.Tensor) -> float:
+    """Compute mean top-1 accuracy for a batch."""
     preds = logits.argmax(dim=1)
     return (preds == y).float().mean().item()
 
 
 def _forward_with_aux(model: torch.nn.Module, x: torch.Tensor):
     """
-    Calls model(x, return_aux=True).
+    Call ``model`` with the standardized auxiliary-output contract.
 
     Returns:
-      logits, aux (aux may be empty)
+    - Tuple ``(logits, aux_dict)`` where ``aux_dict`` may be empty.
+
+    Assumptions:
+    - The model implements ``forward(..., return_aux=True)`` and returns
+      ``(Tensor, dict)``.
     """
     out = model(x, return_aux=True)  # standardized
     assert isinstance(out, tuple) and len(out) == 2 and isinstance(out[1], dict)
@@ -29,7 +36,14 @@ def _forward_with_aux(model: torch.nn.Module, x: torch.Tensor):
 
 def _extract_aux_metrics(aux: AuxDict) -> Dict[str, float]:
     """
-    Standardizes optional CRP-style aux fields into scalar batch aggregates.
+    Reduce optional per-sample aux tensors into scalar batch aggregates.
+
+    Supported aux keys:
+    - ``tau``: integer convergence/certification step per sample.
+    - ``certified``: boolean certification indicator per sample.
+
+    Returns:
+    - A dict containing sums and counts used for streaming epoch metrics.
     """
     metrics: Dict[str, float] = {}
 
@@ -55,6 +69,22 @@ def train_one_epoch(
     opt: torch.optim.Optimizer,
     device: str,
 ) -> Tuple[float, Dict[str, float]]:
+    """
+    Run one training epoch and aggregate optional aux-derived metrics.
+
+    Inputs:
+    - model: Module that supports ``return_aux=True`` in forward (all modules are expected to do this by default).
+    - loader: Supervised batches ``(x, y)``.
+    - opt: Optimizer updated once per batch.
+    - device: Target compute device string.
+
+    Returns:
+    - ``(mean_loss, metrics)`` where ``metrics`` may contain ``cert_rate`` and
+      ``tau_mean`` depending on model aux payload.
+
+    Side effects:
+    - Mutates model and optimizer state via backpropagation.
+    """
     model.train()
     total_loss = 0.0
     n = 0
@@ -100,6 +130,16 @@ def eval_one_epoch(
     loader: DataLoader,
     device: str,
 ) -> Tuple[float, float, Dict[str, float]]:
+    """
+    Run one evaluation epoch without gradient updates.
+
+    Returns:
+    - ``(mean_loss, mean_accuracy, metrics)`` where ``metrics`` mirrors the
+      aux aggregation behavior of ``train_one_epoch``.
+
+    Side effects:
+    - None on model parameters; model mode is set to eval during the call.
+    """
     model.eval()
     total_loss = 0.0
     total_acc = 0.0

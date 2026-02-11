@@ -1,3 +1,5 @@
+"""Quick local script to verify PyTorch device selection and tensor allocation."""
+
 import torch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

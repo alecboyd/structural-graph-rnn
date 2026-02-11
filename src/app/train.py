@@ -14,6 +14,13 @@ from src.core.device import default_device
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    """
+    Build the CLI parser for model and training configuration.
+
+    The parser exposes shared optimization flags plus model-specific flags.
+    Values are later mapped into ``ExperimentConfig`` and nested config
+    dataclasses in ``src.core.types``.
+    """
     parser = argparse.ArgumentParser()
 
     # dataset selection
@@ -30,17 +37,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--debug-compare-mlp-crp", action="store_true", default=False)
+    parser.add_argument("--init-type", type=str, default="kaiming_uniform")
+    parser.add_argument("--activation", type=str, default="leaky_relu")
+    parser.add_argument("--negative-slope", type=float, default=None)
 
     # optional: allow overriding dims for custom datasets later
     parser.add_argument("--input-dim", type=int, default=None)
     parser.add_argument("--num-classes", type=int, default=None)
 
     # MLP-only
-    parser.add_argument("--mlp-hidden-dim", type=int, default=256)
-    parser.add_argument("--mlp-num-hidden-layers", type=int, default=2)
+    parser.add_argument("--hidden-dim", type=int, default=256)
+    parser.add_argument("--num-hidden-layers", type=int, default=2)
 
     # CRP-only
-    parser.add_argument("--crp-hidden-dim", type=int, default=256)
+    parser.add_argument("--schematic", type=str, default="base")
     parser.add_argument("--kappa", type=float, default=1.0)
     parser.add_argument("--c", type=float, default=0.95)
     parser.add_argument("--alpha", type=float, default=0.05)
@@ -54,6 +66,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """
+    Parse CLI arguments, build experiment config, and run training.
+
+    Inputs:
+    - argv: Optional explicit argument list for tests or embedding.
+
+    Side effects:
+    - Downloads datasets as needed.
+    - Trains a model and prints epoch metrics to stdout.
+
+    Interactions:
+    - Uses ``src.core.trainer.run_training`` as the orchestration entrypoint.
+    """
     args = build_arg_parser().parse_args(argv)
 
     train_cfg = TrainLoopConfig(
@@ -63,7 +88,10 @@ def main(argv: list[str] | None = None) -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         device=args.device,
+        seed=args.seed,
     )
+
+    neg_slope = args.negative_slope if args.negative_slope is not None else args.alpha
 
     exp = ExperimentConfig(
         model_id=args.model,
@@ -72,18 +100,24 @@ def main(argv: list[str] | None = None) -> None:
         train=train_cfg,
         input_dim=args.input_dim,
         num_classes=args.num_classes,
+        init_type=args.init_type,
+        activation=args.activation,
+        negative_slope=neg_slope,
     )
 
     if args.model == "mlp":
         exp = replace(
             exp,
-            mlp=MLPModelConfig(hidden_dim=args.mlp_hidden_dim, num_hidden_layers=args.mlp_num_hidden_layers),
+            mlp=MLPModelConfig(hidden_dim=args.hidden_dim, num_hidden_layers=args.num_hidden_layers),
         )
-    else:
+        
+    if args.model == "crp":
         exp = replace(
             exp,
             crp=CRPModelConfig(
-                hidden_dim=args.crp_hidden_dim,
+                hidden_dim=args.hidden_dim,
+                schematic=args.schematic,
+                num_hidden_layers=args.num_hidden_layers,
                 kappa=args.kappa,
                 c=args.c,
                 alpha=args.alpha,
@@ -94,7 +128,7 @@ def main(argv: list[str] | None = None) -> None:
             ),
         )
 
-    run_training(exp)
+    run_training(exp, debug_compare=args.debug_compare_mlp_crp)
 
 
 if __name__ == "__main__":

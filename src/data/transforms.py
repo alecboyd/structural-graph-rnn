@@ -1,3 +1,5 @@
+"""Input preprocessing transforms used by dataset builders."""
+
 from __future__ import annotations
 
 from torchvision import transforms
@@ -5,7 +7,13 @@ from torchvision import transforms
 
 def mnist_transform() -> transforms.Compose:
     """
-    Standard MNIST preprocessing
+    Return the default MNIST preprocessing pipeline.
+
+    Output:
+    - ``ToTensor`` conversion followed by dataset-specific normalization.
+
+    Assumptions:
+    - Input images are grayscale MNIST images in the standard range.
     """
     return transforms.Compose(
         [
