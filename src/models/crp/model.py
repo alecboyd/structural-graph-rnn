@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -17,7 +16,6 @@ class CRPConfig:
     # Contraction / dynamics
     kappa: float = 1.0
     c: float = 0.95
-    alpha: float = 0.05
     eps: float = 1e-8
 
     # Inference budget
@@ -26,6 +24,10 @@ class CRPConfig:
     # Certification
     use_certification: bool = True
     margin_factor: float = 2.0
+
+    # Recurrent normalization
+    recurrent_norm: str = "weighted_inf"  # "plain_inf" | "weighted_inf"
+    weighted_inf_iters: int = 20
 
 
 class CRPClassifier(nn.Module):
@@ -52,13 +54,15 @@ class CRPClassifier(nn.Module):
         *,
         cfg: Optional[CRPConfig] = None,
         bias: bool = True,
-        dag: bool = False,
         init_type: str = "kaiming_uniform",
         activation: str = "leaky_relu",
         negative_slope: float = 0.05,
         MIH: torch.Tensor,
         MH: torch.Tensor,
         MHL: torch.Tensor,
+        MIH_edges: Optional[torch.Tensor] = None,
+        MH_edges: Optional[torch.Tensor] = None,
+        MHL_edges: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Initialize a CRP classifier from structural masks and dynamic settings.
@@ -66,11 +70,11 @@ class CRPClassifier(nn.Module):
         Inputs:
         - cfg: Dynamics and certification configuration.
         - bias: Whether hidden/output bias terms are trainable.
-        - dag: When true, do not enforce contraction normalization.
         - init_type: Global weight initialization policy.
         - activation: Global activation selection.
         - negative_slope: LeakyReLU slope when activation is leaky.
         - MIH, MH, MHL: Binary or weighted masks defining graph structure.
+        - MIH_edges, MH_edges, MHL_edges: Optional edge lists derived from masks.
 
         Invariants:
         - Mask dimensions must be 2D and mutually consistent on hidden size.
@@ -115,19 +119,30 @@ class CRPClassifier(nn.Module):
         self.num_classes = num_classes
 
         self.cfg = cfg if cfg is not None else CRPConfig()
-        self.dag = bool(dag)
         self.init_type = init_type
         self.activation = activation
         self.negative_slope = float(negative_slope)
-        if self.dag:
-            warnings.warn(
-                "CRPClassifier: schematic marked dag=True; skipping contraction normalization."
-            )
 
         # Store masks as buffers so they move with .to(device) and are saved in state_dict
         self.register_buffer("MIH", MIH.float())
         self.register_buffer("MH", MH.float())
         self.register_buffer("MHL", MHL.float())
+        # Store edge lists as buffers if provided (not used in forward).
+        if MIH_edges is not None:
+            self.register_buffer("MIH_edges", MIH_edges)
+        else:
+            self.MIH_edges = None
+        if MH_edges is not None:
+            self.register_buffer("MH_edges", MH_edges)
+        else:
+            self.MH_edges = None
+        if MHL_edges is not None:
+            self.register_buffer("MHL_edges", MHL_edges)
+        else:
+            self.MHL_edges = None
+
+        # Weighted norm vector for recurrent normalization (used when enabled).
+        self.register_buffer("w_inf", torch.ones(self.hidden_dim))
 
         # Trainable raw weights (masked later)
         self.RIH = nn.Parameter(torch.empty(self.input_dim, self.hidden_dim))
@@ -187,22 +202,51 @@ class CRPClassifier(nn.Module):
         nn.init.uniform_(bias, -bound, bound)
 
     @torch.no_grad()
+    def update_w_inf(self, iters: int, eps: float) -> None:
+        """
+        Power iteration on A = |RH_masked|^T to update the weighted norm vector.
+        """
+        RH_masked = self.RH * self.MH
+        A = RH_masked.abs().t()
+        w = self.w_inf
+        for _ in range(max(1, int(iters))):
+            w = A @ w
+            w = w / w.max().clamp_min(eps)
+            w = w.clamp_min(eps)
+        self.w_inf = w
+
+    @torch.no_grad()
+    def update_normalization_cache(self) -> None:
+        """
+        Update cached weighted norm vector if weighted normalization is enabled.
+        """
+        if self.cfg.recurrent_norm == "weighted_inf":
+            self.update_w_inf(self.cfg.weighted_inf_iters, self.cfg.eps)
+
+    @torch.no_grad()
     def _normalize_recurrent(self, RH_masked: torch.Tensor) -> torch.Tensor:
         """
-        Scale masked recurrent weights so the induced infinity norm is bounded.
+        Scale masked recurrent weights so the induced norm bound is <= c.
 
-        Assumption:
-        - ``cfg.c`` is in ``[0, 1)`` to preserve contraction behavior.
-        - Only used when ``dag`` is false.
+        Modes:
+        - plain_inf: m = max_j sum_i |W_ij|
+        - weighted_inf: m = max_j ((|W|^T w)_j / w_j)
         """
         eps = float(self.cfg.eps)
         c = float(self.cfg.c)
+        mode = self.cfg.recurrent_norm
 
-        # ||W_H^T||_inf = max column L1 sum
-        col_l1 = RH_masked.abs().sum(dim=0)
-        max_col_l1 = col_l1.max().clamp_min(eps)
+        if mode == "plain_inf":
+            col_l1 = RH_masked.abs().sum(dim=0)
+            m = col_l1.max().clamp_min(eps)
+        elif mode == "weighted_inf":
+            w = self.w_inf.clamp_min(eps)
+            m_vec = (RH_masked.abs().t() @ w) / w
+            m = m_vec.max().clamp_min(eps)
+        else:
+            raise ValueError(f"Unknown recurrent_norm: {mode!r}")
 
-        scale = c / max_col_l1
+        scale = min(1.0, c / m)
         return RH_masked * scale
 
     def _build_weights(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -220,12 +264,13 @@ class CRPClassifier(nn.Module):
         W_HL = self.RHL * self.MHL
 
         RH_masked = self.RH * self.MH
-        if self.dag:
-            W_H = RH_masked
-        else:
-            W_H = self._normalize_recurrent(RH_masked)
-            # Straight-through gradient trick: forward uses normalized, backward sees RH_masked gradient
-            W_H = W_H + (RH_masked - RH_masked.detach())
+        if self.cfg.recurrent_norm == "weighted_inf":
+            # Expect update_w_inf to be called once per epoch by trainer.
+            if torch.any(self.w_inf <= 0):
+                self.update_w_inf(self.cfg.weighted_inf_iters, self.cfg.eps)
+        W_H = self._normalize_recurrent(RH_masked)
+        # Straight-through gradient trick: forward uses normalized, backward sees RH_masked gradient
+        W_H = W_H + (RH_masked - RH_masked.detach())
         return W_IH, W_H, W_HL
 
     def forward(
@@ -271,9 +316,8 @@ class CRPClassifier(nn.Module):
 
         if not (0.0 <= kappa <= 1.0):
             raise ValueError("cfg.kappa must be in [0, 1]")
-        if not self.dag:
-            if not (0.0 <= c < 1.0):
-                raise ValueError("cfg.c must be in [0, 1) when dag=False")
+        if not (0.0 <= c < 1.0):
+            raise ValueError("cfg.c must be in [0, 1)")
 
         rho = (1.0 - kappa) + kappa * c
         denom = max(1e-12, 1.0 - rho)
@@ -301,7 +345,11 @@ class CRPClassifier(nn.Module):
             logits = H_next @ W_HL + BL
 
             if self.cfg.use_certification:
-                dH = (H_next - H_prev).abs().max(dim=1).values
+                if self.cfg.recurrent_norm == "weighted_inf":
+                    w = self.w_inf.clamp_min(float(self.cfg.eps))
+                    dH = ((H_next - H_prev).abs() / w).max(dim=1).values
+                else:
+                    dH = (H_next - H_prev).abs().max(dim=1).values
                 Gamma = W_HL_T_inf * (rho / denom) * dH
 
                 top2 = torch.topk(logits, k=2, dim=1).values

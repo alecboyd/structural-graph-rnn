@@ -20,3 +20,12 @@ src/data/__pycache__/datasets.cpython-314.pyc
 *.pyc
 *.pyc
 *.pyc
+data/checkpoints/_every2_smoke.pt
+data/checkpoints/train_state_mlp_mnist_25runs_20260226_213145.pt
+data/multi_run_crp_mnist_25runs_20260216_194325.txt
+data/multi_run_crp_mnist_5runs_20260216_184736.txt
+data/multi_run_mlp_mnist_25runs_20260216_202724.txt
+data/multi_run_mlp_mnist_2runs_20260226_212729.txt
+data/multi_run_mlp_mnist_2runs_20260226_212934.txt
+For GPT (2).zip
+*.pyc

@@ -76,11 +76,13 @@ def build_crp(
     return CRPClassifier(
         cfg=spec.cfg,
         bias=spec.bias,
-        dag=schematic.dag,
         init_type=init_type,
         activation=activation,
         negative_slope=negative_slope,
         MIH=schematic.MIH,
         MH=schematic.MH,
         MHL=schematic.MHL,
+        MIH_edges=schematic.MIH_edges,
+        MH_edges=schematic.MH_edges,
+        MHL_edges=schematic.MHL_edges,
     )

@@ -62,6 +62,9 @@ class CRPModelConfig:
     use_certification: bool = True
     margin_factor: float = 2.0
 
+    recurrent_norm: str = "plain_inf"  # "plain_inf" | "weighted_inf"
+    weighted_inf_iters: int = 20
+
     kappa: float = 1.0
     c: float = 0.95
     alpha: float = 0.05

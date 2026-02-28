@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -23,6 +24,19 @@ class CRPSchematic:
     MIH: torch.Tensor
     MH: torch.Tensor
     MHL: torch.Tensor
+    # Optional cached edge lists; tuples of (src_index, dst_index).
+    MIH_edges: Optional[torch.Tensor] = None
+    MH_edges: Optional[torch.Tensor] = None
+    MHL_edges: Optional[torch.Tensor] = None
+
+
+def _edges_from_mask(mask: torch.Tensor) -> torch.Tensor:
+    """
+    Return edge list indices (src, dst) for nonzero entries in a mask.
+    """
+    if mask.dim() != 2:
+        raise ValueError("mask must be 2D")
+    return mask.nonzero(as_tuple=False)
 
 
 def base_schematic(*, input_dim: int, hidden_dim: int, num_classes: int) -> CRPSchematic:
@@ -31,12 +45,18 @@ def base_schematic(*, input_dim: int, hidden_dim: int, num_classes: int) -> CRPS
 
     This mirrors the dense behavior of the current CRP baseline.
     """
+    MIH = torch.ones(input_dim, hidden_dim)
+    MH = torch.ones(hidden_dim, hidden_dim)
+    MHL = torch.ones(hidden_dim, num_classes)
     return CRPSchematic(
         name="base",
         dag=False,
-        MIH=torch.ones(input_dim, hidden_dim),
-        MH=torch.ones(hidden_dim, hidden_dim),
-        MHL=torch.ones(hidden_dim, num_classes),
+        MIH=MIH,
+        MH=MH,
+        MHL=MHL,
+        MIH_edges=_edges_from_mask(MIH),
+        MH_edges=_edges_from_mask(MH),
+        MHL_edges=_edges_from_mask(MHL),
     )
 
 
@@ -85,4 +105,7 @@ def feedforward_schematic(
         MIH=MIH,
         MH=MH,
         MHL=MHL,
+        MIH_edges=_edges_from_mask(MIH),
+        MH_edges=_edges_from_mask(MH),
+        MHL_edges=_edges_from_mask(MHL),
     )

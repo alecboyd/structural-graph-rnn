@@ -9,7 +9,7 @@ from src.core.types import (
     MLPModelConfig,
     CRPModelConfig,
 )
-from src.core.trainer import run_training
+from src.core.trainer import run_training, run_training_multiple, resume_training_from_state
 from src.core.device import default_device
 
 
@@ -38,6 +38,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--num-runs", type=int, default=1)
+    parser.add_argument("--save-state-every", type=int, default=0)
+    parser.add_argument("--save-state-path", type=str, default=None)
+    parser.add_argument("--resume-state", type=str, default=None)
     parser.add_argument("--debug-compare-mlp-crp", action="store_true", default=False)
     parser.add_argument("--init-type", type=str, default="kaiming_uniform")
     parser.add_argument("--activation", type=str, default="leaky_relu")
@@ -54,13 +58,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # CRP-only
     parser.add_argument("--schematic", type=str, default="base")
     parser.add_argument("--kappa", type=float, default=1.0)
-    parser.add_argument("--c", type=float, default=0.95)
+    parser.add_argument("--c", type=float, default=0.999)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--eps", type=float, default=1e-8)
     parser.add_argument("--t-max", type=int, default=32)
     parser.add_argument("--use-certification", action="store_true", default=True)
     parser.add_argument("--no-certification", action="store_false", dest="use_certification")
     parser.add_argument("--margin-factor", type=float, default=2.0)
+    parser.add_argument(
+        "--recurrent-norm",
+        type=str,
+        choices=["plain_inf", "weighted_inf"],
+        default="weighted_inf",
+    )
+    parser.add_argument("--weighted-inf-iters", type=int, default=20)
 
     return parser
 
@@ -80,6 +91,17 @@ def main(argv: list[str] | None = None) -> None:
     - Uses ``src.core.trainer.run_training`` as the orchestration entrypoint.
     """
     args = build_arg_parser().parse_args(argv)
+    if args.save_state_every < 0:
+        raise ValueError(f"--save-state-every must be >= 0, got {args.save_state_every}.")
+    if args.resume_state is not None:
+        resume_training_from_state(
+            args.resume_state,
+            save_state_path=args.save_state_path,
+            save_state_every=(args.save_state_every if args.save_state_every > 0 else None),
+        )
+        return
+    if args.num_runs < 1:
+        raise ValueError(f"--num-runs must be >= 1, got {args.num_runs}.")
 
     train_cfg = TrainLoopConfig(
         epochs=args.epochs,
@@ -125,10 +147,26 @@ def main(argv: list[str] | None = None) -> None:
                 t_max=args.t_max,
                 use_certification=args.use_certification,
                 margin_factor=args.margin_factor,
+                recurrent_norm=args.recurrent_norm,
+                weighted_inf_iters=args.weighted_inf_iters,
             ),
         )
 
-    run_training(exp, debug_compare=args.debug_compare_mlp_crp)
+    if args.num_runs == 1:
+        run_training(
+            exp,
+            debug_compare=args.debug_compare_mlp_crp,
+            save_state_every=args.save_state_every,
+            save_state_path=args.save_state_path,
+        )
+    else:
+        run_training_multiple(
+            exp,
+            num_runs=args.num_runs,
+            debug_compare=args.debug_compare_mlp_crp,
+            save_state_every=args.save_state_every,
+            save_state_path=args.save_state_path,
+        )
 
 
 if __name__ == "__main__":

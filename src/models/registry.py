@@ -65,6 +65,8 @@ def _build_crp(cfg: ExperimentConfig, input_dim: int, num_classes: int) -> nn.Mo
         t_max=crp_cfg.t_max,
         use_certification=crp_cfg.use_certification,
         margin_factor=crp_cfg.margin_factor,
+        recurrent_norm=crp_cfg.recurrent_norm,
+        weighted_inf_iters=crp_cfg.weighted_inf_iters,
     )
     return build_crp(
         input_dim=input_dim,
