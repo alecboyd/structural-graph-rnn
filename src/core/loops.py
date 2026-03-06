@@ -104,6 +104,17 @@ def train_one_epoch(
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
+        if hasattr(model, "deepr_step_all"):
+            # DeepR-managed parameters are updated explicitly after optimizer step.
+            lr = float(opt.param_groups[0].get("lr", 0.0))
+            drift = getattr(getattr(model, "cfg", None), "deepr_drift_alpha", None)
+            temp = getattr(getattr(model, "cfg", None), "deepr_temperature", None)
+            kwargs = {"lr": lr}
+            if drift is not None:
+                kwargs["drift_alpha"] = float(drift)
+            if temp is not None:
+                kwargs["T"] = float(temp)
+            model.deepr_step_all(**kwargs)
 
         bsz = x.size(0)
         total_loss += loss.item() * bsz

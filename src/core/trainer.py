@@ -35,6 +35,7 @@ class TrainingRunResult:
     test_acc: Optional[float]
     test_metrics: dict[str, float]
     epoch_records: list[dict[str, Any]]
+    adjacency_lines: list[str]
     log_lines: list[str]
 
 
@@ -56,6 +57,7 @@ def _serialize_result(result: TrainingRunResult) -> dict[str, Any]:
         "test_acc": None if result.test_acc is None else float(result.test_acc),
         "test_metrics": dict(result.test_metrics),
         "epoch_records": [dict(r) for r in result.epoch_records],
+        "adjacency_lines": list(result.adjacency_lines),
         "log_lines": list(result.log_lines),
     }
 
@@ -71,6 +73,7 @@ def _deserialize_result(payload: dict[str, Any]) -> TrainingRunResult:
         test_acc=None if payload.get("test_acc") is None else float(payload["test_acc"]),
         test_metrics=dict(payload.get("test_metrics", {})),
         epoch_records=[dict(r) for r in payload.get("epoch_records", [])],
+        adjacency_lines=list(payload.get("adjacency_lines", [])),
         log_lines=list(payload.get("log_lines", [])),
     )
 
@@ -127,9 +130,23 @@ def _atomic_torch_save(obj: dict[str, Any], path: Path) -> None:
     tmp.replace(path)
 
 
+def _artifacts_root(cfg: ExperimentConfig) -> Path:
+    """Return root directory for training artifacts (checkpoints, logs)."""
+    root = getattr(cfg, "artifacts_dir", "./runs")
+    return Path(root)
+
+
+def _checkpoints_dir(cfg: ExperimentConfig) -> Path:
+    return _artifacts_root(cfg) / "checkpoints"
+
+
+def _logs_dir(cfg: ExperimentConfig) -> Path:
+    return _artifacts_root(cfg) / "logs"
+
+
 def _default_session_checkpoint_path(cfg: ExperimentConfig, *, num_runs: int) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    subdir = Path(cfg.data_dir) / "checkpoints"
+    subdir = _checkpoints_dir(cfg)
     return subdir / f"train_state_{cfg.model_id}_{cfg.dataset}_{num_runs}runs_{ts}.pt"
 
 
@@ -199,7 +216,6 @@ def _debug_compare_mlp_crp(
             cfg=CRPConfig(
                 kappa=crp_cfg.kappa,
                 c=crp_cfg.c,
-                alpha=cfg.negative_slope if cfg.activation.lower() == "leaky_relu" else 0.0,
                 eps=crp_cfg.eps,
                 t_max=crp_cfg.t_max,
                 use_certification=crp_cfg.use_certification,
@@ -327,9 +343,8 @@ def _run_training_once(
     va_metrics: dict[str, float] = {}
 
     for epoch in range(start_epoch + 1, train_cfg.epochs + 1):
-        if cfg.crp is not None:
-            if hasattr(model, "update_normalization_cache"):
-                model.update_normalization_cache()
+        if hasattr(model, "update_normalization_cache"):
+            model.update_normalization_cache()
         tr_loss, tr_metrics = train_one_epoch(model, ds.train_loader, opt, train_cfg.device)
         va_loss, va_acc, va_metrics = eval_one_epoch(model, ds.val_loader, train_cfg.device)
 
@@ -375,6 +390,7 @@ def _run_training_once(
         te_loss, te_acc, te_metrics = eval_one_epoch(model, ds.test_loader, train_cfg.device)
         extra_te = _show_extra(te_metrics, "test")
         emit(f"TEST | loss={te_loss:.4f} | acc={te_acc:.4f}{extra_te}")
+    adjacency_lines = _format_model_adjacency_lines(model)
 
     return TrainingRunResult(
         final_train_loss=tr_loss,
@@ -386,6 +402,7 @@ def _run_training_once(
         test_acc=te_acc,
         test_metrics=te_metrics,
         epoch_records=epoch_records,
+        adjacency_lines=adjacency_lines,
         log_lines=run_log,
     )
 
@@ -465,6 +482,41 @@ def _format_stats_lines(agg: dict[str, dict[str, float]]) -> list[str]:
             f"min={stats['min']:.6f} q25={stats['q25']:.6f} median={stats['median']:.6f} "
             f"q75={stats['q75']:.6f} max={stats['max']:.6f}"
         )
+    return lines
+
+
+def _format_model_adjacency_lines(model: torch.nn.Module) -> list[str]:
+    """
+    Format model adjacency snapshots as text lines for run-end logging.
+
+    Expected model API:
+    - ``get_adjacency_matrices() -> dict[str, Tensor]`` where each tensor is 2D.
+    """
+    if not hasattr(model, "get_adjacency_matrices"):
+        return []
+
+    try:
+        mats = model.get_adjacency_matrices()
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return [f"ADJACENCY_CAPTURE_ERROR: {exc!r}"]
+
+    if not isinstance(mats, dict) or not mats:
+        return []
+
+    lines: list[str] = ["ADJACENCY SNAPSHOT (run end):"]
+    for name, mat in mats.items():
+        if not isinstance(mat, torch.Tensor) or mat.dim() != 2:
+            lines.append(f"[{name}] invalid adjacency payload; expected 2D tensor")
+            continue
+
+        a = mat.detach().to("cpu").to(dtype=torch.int32)
+        rows, cols = int(a.shape[0]), int(a.shape[1])
+        active_edges = int(a.sum().item())
+        lines.append(f"[{name}] shape=({rows}, {cols}) active_edges={active_edges}")
+        for r in range(rows):
+            row = " ".join(str(int(v)) for v in a[r].tolist())
+            lines.append(row)
+        lines.append("")
     return lines
 
 
@@ -658,6 +710,8 @@ def _run_training_session(
         results.append(result)
         if num_runs > 1:
             combined_log_lines.extend(result.log_lines)
+            if result.adjacency_lines:
+                combined_log_lines.extend(result.adjacency_lines)
             combined_log_lines.append("")
         else:
             combined_log_lines = list(result.log_lines)
@@ -675,10 +729,10 @@ def _run_training_session(
             print(line)
         combined_log_lines.extend(final_summary_lines)
 
-        data_dir = Path(cfg.data_dir)
-        data_dir.mkdir(parents=True, exist_ok=True)
+        log_dir = _logs_dir(cfg)
+        log_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = data_dir / f"multi_run_{cfg.model_id}_{cfg.dataset}_{num_runs}runs_{ts}.txt"
+        log_path = log_dir / f"multi_run_{cfg.model_id}_{cfg.dataset}_{num_runs}runs_{ts}.txt"
         log_path.write_text("\n".join(combined_log_lines) + "\n", encoding="utf-8")
         final_log_path = str(log_path)
         print(f"Saved multi-run log to {log_path}")
@@ -831,7 +885,9 @@ def run_training_multiple(
             epoch_end_callback=on_epoch_end,
         )
         results.append(result)
-        combined_log_lines.extend(run_lines)
+        combined_log_lines.extend(result.log_lines)
+        if result.adjacency_lines:
+            combined_log_lines.extend(result.adjacency_lines)
         combined_log_lines.append("")
 
     print()
@@ -842,9 +898,9 @@ def run_training_multiple(
         print(line)
     combined_log_lines.extend(summary_lines)
 
-    data_dir = Path(cfg.data_dir)
-    data_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = _logs_dir(cfg)
+    log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = data_dir / f"multi_run_{cfg.model_id}_{cfg.dataset}_{num_runs}runs_{ts}.txt"
+    log_path = log_dir / f"multi_run_{cfg.model_id}_{cfg.dataset}_{num_runs}runs_{ts}.txt"
     log_path.write_text("\n".join(combined_log_lines) + "\n", encoding="utf-8")
     print(f"Saved multi-run log to {log_path}")

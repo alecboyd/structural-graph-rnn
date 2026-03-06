@@ -8,6 +8,8 @@ from src.core.types import (
     TrainLoopConfig,
     MLPModelConfig,
     CRPModelConfig,
+    CRPAdaptiveModelConfig,
+    MLPAdaptiveModelConfig,
 )
 from src.core.trainer import run_training, run_training_multiple, resume_training_from_state
 from src.core.device import default_device
@@ -26,9 +28,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # dataset selection
     parser.add_argument("--dataset", type=str, default="mnist")
     parser.add_argument("--data-dir", type=str, default="./data")
+    parser.add_argument("--artifacts-dir", type=str, default="./runs")
 
     # model selection
-    parser.add_argument("--model", type=str, choices=["mlp", "crp"], default="mlp")
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["mlp", "crp", "crp_adaptive", "mlp_adaptive"],
+        default="mlp",
+    )
 
     # training / optim (shared)
     parser.add_argument("--device", type=str, default=default_device())
@@ -73,6 +81,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--weighted-inf-iters", type=int, default=20)
 
+    # Adaptive-model / DeepR controls (shared by CRP-adaptive and MLP-adaptive)
+    parser.add_argument("--deepr-ih", action="store_true", default=True)
+    parser.add_argument("--no-deepr-ih", action="store_false", dest="deepr_ih")
+    parser.add_argument("--deepr-hh", action="store_true", default=True)
+    parser.add_argument("--no-deepr-hh", action="store_false", dest="deepr_hh")
+    parser.add_argument("--deepr-hl", action="store_true", default=True)
+    parser.add_argument("--no-deepr-hl", action="store_false", dest="deepr_hl")
+    parser.add_argument("--k-total", type=int, default=None)
+    parser.add_argument("--frac-total", type=float, default=1.0)
+    parser.add_argument("--full-adjacency-allowed", action="store_true", default=True)
+    parser.add_argument("--mask-adjacency-allowed", action="store_false", dest="full_adjacency_allowed")
+    parser.add_argument("--deepr-drift-alpha", type=float, default=1e-4)
+    parser.add_argument("--deepr-temperature", type=float, default=1e-6)
+    parser.add_argument("--deepr-debug-checks", action="store_true", default=False)
     return parser
 
 
@@ -119,6 +141,7 @@ def main(argv: list[str] | None = None) -> None:
         model_id=args.model,
         dataset=args.dataset,
         data_dir=args.data_dir,
+        artifacts_dir=args.artifacts_dir,
         train=train_cfg,
         input_dim=args.input_dim,
         num_classes=args.num_classes,
@@ -149,6 +172,46 @@ def main(argv: list[str] | None = None) -> None:
                 margin_factor=args.margin_factor,
                 recurrent_norm=args.recurrent_norm,
                 weighted_inf_iters=args.weighted_inf_iters,
+            ),
+        )
+    if args.model == "crp_adaptive":
+        exp = replace(
+            exp,
+            crp_adaptive=CRPAdaptiveModelConfig(
+                hidden_dim=args.hidden_dim,
+                schematic=args.schematic,
+                num_hidden_layers=args.num_hidden_layers,
+                kappa=args.kappa,
+                c=args.c,
+                alpha=args.alpha,
+                eps=args.eps,
+                t_max=args.t_max,
+                use_certification=args.use_certification,
+                margin_factor=args.margin_factor,
+                recurrent_norm=args.recurrent_norm,
+                weighted_inf_iters=args.weighted_inf_iters,
+                deepr_ih=args.deepr_ih,
+                deepr_hh=args.deepr_hh,
+                deepr_hl=args.deepr_hl,
+                K_total=args.k_total,
+                frac_total=args.frac_total,
+                full_adjacency_allowed=args.full_adjacency_allowed,
+                deepr_drift_alpha=args.deepr_drift_alpha,
+                deepr_temperature=args.deepr_temperature,
+                deepr_debug_checks=args.deepr_debug_checks,
+            ),
+        )
+    if args.model == "mlp_adaptive":
+        exp = replace(
+            exp,
+            mlp_adaptive=MLPAdaptiveModelConfig(
+                hidden_dim=args.hidden_dim,
+                num_hidden_layers=args.num_hidden_layers,
+                K_total=args.k_total,
+                frac_total=args.frac_total,
+                deepr_drift_alpha=args.deepr_drift_alpha,
+                deepr_temperature=args.deepr_temperature,
+                deepr_debug_checks=args.deepr_debug_checks,
             ),
         )
 

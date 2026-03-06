@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Literal, Optional
 
 import torch
 
-ModelID = Literal["mlp", "crp"]
+ModelID = Literal["mlp", "crp", "crp_adaptive", "mlp_adaptive"]
 AuxDict = Dict[str, Any]
 
 
@@ -19,6 +19,7 @@ class TrainLoopConfig:
     This config is consumed by ``src.core.trainer.run_training`` to construct
     loaders, optimizer, and epoch scheduling behavior.
     """
+
     epochs: int = 10
     lr: float = 1e-3
     weight_decay: float = 0.0
@@ -31,14 +32,10 @@ class TrainLoopConfig:
 @dataclass
 class MLPModelConfig:
     """Configuration for building the MLP model variant."""
+
     hidden_dim: int = 256
     num_hidden_layers: int = 2
 
-
-@dataclass
-class CRPModelConfig:
-    """Configuration for building the CRP model variant."""
-    hidden_dim: int = 256
 
 @dataclass
 class CRPModelConfig:
@@ -47,12 +44,12 @@ class CRPModelConfig:
 
     Assumptions:
     - ``schematic`` selects the structural mask strategy used by the factory.
-    - ``num_hidden_layers`` is primarily relevant for feedforward-style schematics. Other schematics lock the number of hidden layers to one. 
+    - ``num_hidden_layers`` is primarily relevant for feedforward schematics.
     """
-    hidden_dim: int = 256
 
-    schematic: str = "base"           # "base" | "feedforward" | ...
-    num_hidden_layers: int = 2        # only used if schematic=="feedforward"
+    hidden_dim: int = 256
+    schematic: str = "base"  # "base" | "feedforward"
+    num_hidden_layers: int = 2
 
     kappa: float = 1.0
     c: float = 0.95
@@ -65,6 +62,15 @@ class CRPModelConfig:
     recurrent_norm: str = "plain_inf"  # "plain_inf" | "weighted_inf"
     weighted_inf_iters: int = 20
 
+
+@dataclass
+class CRPAdaptiveModelConfig:
+    """Configuration for CRPAdaptive model construction and DeepR controls."""
+
+    hidden_dim: int = 256
+    schematic: str = "base"  # "base" | "feedforward"
+    num_hidden_layers: int = 2
+
     kappa: float = 1.0
     c: float = 0.95
     alpha: float = 0.05
@@ -73,6 +79,32 @@ class CRPModelConfig:
     use_certification: bool = True
     margin_factor: float = 2.0
 
+    recurrent_norm: str = "plain_inf"  # "plain_inf" | "weighted_inf"
+    weighted_inf_iters: int = 20
+
+    deepr_ih: bool = True
+    deepr_hh: bool = True
+    deepr_hl: bool = True
+    K_total: Optional[int] = None
+    frac_total: float = 1.0
+    full_adjacency_allowed: bool = True
+    deepr_drift_alpha: float = 1e-4
+    deepr_temperature: float = 1e-6
+    deepr_debug_checks: bool = False
+
+
+@dataclass
+class MLPAdaptiveModelConfig:
+    """Configuration for MLPAdaptive model construction and DeepR controls."""
+
+    hidden_dim: int = 256
+    num_hidden_layers: int = 2
+
+    K_total: Optional[int] = None
+    frac_total: float = 1.0
+    deepr_drift_alpha: float = 1e-4
+    deepr_temperature: float = 1e-6
+    deepr_debug_checks: bool = False
 
 
 @dataclass
@@ -83,21 +115,22 @@ class ExperimentConfig:
     It ties together dataset selection, model selection, training config, and
     optional explicit dimension overrides.
     """
+
     model_id: ModelID = "mlp"
     dataset: str = "mnist"
     data_dir: str = "./data"
+    artifacts_dir: str = "./runs"
 
-    # IMPORTANT: must be default_factory, not TrainLoopConfig()
     train: TrainLoopConfig = field(default_factory=TrainLoopConfig)
 
     mlp: Optional[MLPModelConfig] = None
     crp: Optional[CRPModelConfig] = None
+    crp_adaptive: Optional[CRPAdaptiveModelConfig] = None
+    mlp_adaptive: Optional[MLPAdaptiveModelConfig] = None
 
-    # optional overrides
     input_dim: Optional[int] = None
     num_classes: Optional[int] = None
 
-    # global model behavior
-    init_type: str = "kaiming_uniform"   # "kaiming_uniform" | "linear_default"
-    activation: str = "leaky_relu"       # "relu" | "leaky_relu"
+    init_type: str = "kaiming_uniform"  # "kaiming_uniform" | "linear_default"
+    activation: str = "leaky_relu"  # "relu" | "leaky_relu"
     negative_slope: float = 0.05
