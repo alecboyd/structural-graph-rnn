@@ -294,7 +294,7 @@ class CRPClassifier(nn.Module):
         - None outside standard module forward computation.
 
         Assumptions:
-        - ``cfg.kappa`` is in ``[0, 1]`` and ``cfg.c`` is in ``[0, 1)``.
+        - ``cfg.kappa`` is in ``(0, 1]`` and ``cfg.c`` is in ``[0, 1)``.
         """
         if x.dim() > 2:
             x = x.view(x.size(0), -1)
@@ -314,8 +314,8 @@ class CRPClassifier(nn.Module):
         c = float(self.cfg.c)
         t_max = int(self.cfg.t_max)
 
-        if not (0.0 <= kappa <= 1.0):
-            raise ValueError("cfg.kappa must be in [0, 1]")
+        if not (0.0 < kappa <= 1.0):
+            raise ValueError("cfg.kappa must be in (0, 1]")
         if not (0.0 <= c < 1.0):
             raise ValueError("cfg.c must be in [0, 1)")
 
