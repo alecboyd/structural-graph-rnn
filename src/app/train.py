@@ -11,7 +11,14 @@ from src.core.types import (
     CRPAdaptiveModelConfig,
     MLPAdaptiveModelConfig,
 )
-from src.core.trainer import run_training, run_training_multiple, resume_training_from_state
+from src.core.trainer import (
+    run_training,
+    run_training_multiple,
+    resume_training_from_state,
+    run_crp_c_sensitivity_experiment,
+    run_comparison_condition_experiment,
+    comparison_condition_ids,
+)
 from src.core.device import default_device
 
 
@@ -65,6 +72,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # CRP-only
     parser.add_argument("--schematic", type=str, default="base")
+    parser.add_argument("--random-hh-density", type=float, default=0.5)
+    parser.add_argument("--random-hh-seed", type=int, default=None)
     parser.add_argument("--kappa", type=float, default=1.0)
     parser.add_argument("--c", type=float, default=0.999)
     parser.add_argument("--alpha", type=float, default=0.05)
@@ -95,6 +104,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deepr-drift-alpha", type=float, default=1e-4)
     parser.add_argument("--deepr-temperature", type=float, default=1e-6)
     parser.add_argument("--deepr-debug-checks", action="store_true", default=False)
+
+    # one-command CRP c-sensitivity experiment
+    parser.add_argument("--run-crp-c-sensitivity", action="store_true", default=False)
+    parser.add_argument("--cs-k-min", type=int, default=1)
+    parser.add_argument("--cs-k-max", type=int, default=10)
+    parser.add_argument("--cs-trials", type=int, default=25)
+    parser.add_argument("--cs-epochs", type=int, default=5)
+    parser.add_argument("--cs-hidden-dim", type=int, default=128)
+    parser.add_argument("--cs-hh-density", type=float, default=0.5)
+    parser.add_argument("--cs-base-seed", type=int, default=12345)
+    parser.add_argument("--cs-experiment-name", type=str, default=None)
+
+    # fixed comparison-condition experiments (4 CRP variants + 2 MLP variants)
+    parser.add_argument(
+        "--run-comparison-condition",
+        type=str,
+        choices=comparison_condition_ids(),
+        default=None,
+    )
+    parser.add_argument("--cmp-trials", type=int, default=25)
+    parser.add_argument("--cmp-epochs", type=int, default=25)
+    parser.add_argument("--cmp-base-seed", type=int, default=12345)
+    parser.add_argument("--cmp-k-total", type=int, default=10000)
+    parser.add_argument("--cmp-random-hh-density", type=float, default=0.5)
+    parser.add_argument("--cmp-experiment-name", type=str, default=None)
     return parser
 
 
@@ -150,6 +184,109 @@ def main(argv: list[str] | None = None) -> None:
         negative_slope=neg_slope,
     )
 
+    if args.run_crp_c_sensitivity:
+        exp_for_cs = replace(
+            exp,
+            crp=CRPModelConfig(
+                hidden_dim=args.cs_hidden_dim,
+                schematic="random_density",
+                num_hidden_layers=1,
+                random_hh_density=args.cs_hh_density,
+                random_hh_seed=None,
+                kappa=args.kappa,
+                c=args.c,
+                alpha=args.alpha,
+                eps=args.eps,
+                t_max=args.t_max,
+                use_certification=args.use_certification,
+                margin_factor=args.margin_factor,
+                recurrent_norm=args.recurrent_norm,
+                weighted_inf_iters=args.weighted_inf_iters,
+            ),
+        )
+        run_crp_c_sensitivity_experiment(
+            base_cfg=exp_for_cs,
+            k_min=args.cs_k_min,
+            k_max=args.cs_k_max,
+            trials_per_c=args.cs_trials,
+            epochs_per_trial=args.cs_epochs,
+            hidden_dim=args.cs_hidden_dim,
+            hh_density=args.cs_hh_density,
+            base_seed=args.cs_base_seed,
+            experiment_name=args.cs_experiment_name,
+            save_state_every=(args.save_state_every if args.save_state_every > 0 else 1),
+            save_state_path=args.save_state_path,
+        )
+        return
+
+    if args.run_comparison_condition is not None:
+        exp_for_cmp = replace(
+            exp,
+            crp=CRPModelConfig(
+                hidden_dim=256,
+                schematic="base",
+                num_hidden_layers=1,
+                random_hh_density=args.cmp_random_hh_density,
+                random_hh_seed=None,
+                kappa=args.kappa,
+                c=args.c,
+                alpha=args.alpha,
+                eps=args.eps,
+                t_max=args.t_max,
+                use_certification=args.use_certification,
+                margin_factor=args.margin_factor,
+                recurrent_norm=args.recurrent_norm,
+                weighted_inf_iters=args.weighted_inf_iters,
+            ),
+            crp_adaptive=CRPAdaptiveModelConfig(
+                hidden_dim=256,
+                schematic="base",
+                num_hidden_layers=1,
+                random_hh_density=args.cmp_random_hh_density,
+                random_hh_seed=None,
+                kappa=args.kappa,
+                c=args.c,
+                alpha=args.alpha,
+                eps=args.eps,
+                t_max=args.t_max,
+                use_certification=args.use_certification,
+                margin_factor=args.margin_factor,
+                recurrent_norm=args.recurrent_norm,
+                weighted_inf_iters=args.weighted_inf_iters,
+                deepr_ih=args.deepr_ih,
+                deepr_hh=args.deepr_hh,
+                deepr_hl=args.deepr_hl,
+                K_total=args.cmp_k_total,
+                frac_total=1.0,
+                full_adjacency_allowed=args.full_adjacency_allowed,
+                deepr_drift_alpha=args.deepr_drift_alpha,
+                deepr_temperature=args.deepr_temperature,
+                deepr_debug_checks=args.deepr_debug_checks,
+            ),
+            mlp_adaptive=MLPAdaptiveModelConfig(
+                hidden_dim=128,
+                num_hidden_layers=2,
+                K_total=args.cmp_k_total,
+                frac_total=1.0,
+                deepr_drift_alpha=args.deepr_drift_alpha,
+                deepr_temperature=args.deepr_temperature,
+                deepr_debug_checks=args.deepr_debug_checks,
+            ),
+        )
+        run_comparison_condition_experiment(
+            base_cfg=exp_for_cmp,
+            condition_id=args.run_comparison_condition,
+            trials=args.cmp_trials,
+            epochs=args.cmp_epochs,
+            base_seed=args.cmp_base_seed,
+            k_total=args.cmp_k_total,
+            random_hh_density=args.cmp_random_hh_density,
+            experiment_name=args.cmp_experiment_name,
+            save_state_every=(args.save_state_every if args.save_state_every > 0 else 1),
+            save_state_path=args.save_state_path,
+        )
+        return
+
     if args.model == "mlp":
         exp = replace(
             exp,
@@ -163,6 +300,8 @@ def main(argv: list[str] | None = None) -> None:
                 hidden_dim=args.hidden_dim,
                 schematic=args.schematic,
                 num_hidden_layers=args.num_hidden_layers,
+                random_hh_density=args.random_hh_density,
+                random_hh_seed=args.random_hh_seed,
                 kappa=args.kappa,
                 c=args.c,
                 alpha=args.alpha,
@@ -181,6 +320,8 @@ def main(argv: list[str] | None = None) -> None:
                 hidden_dim=args.hidden_dim,
                 schematic=args.schematic,
                 num_hidden_layers=args.num_hidden_layers,
+                random_hh_density=args.random_hh_density,
+                random_hh_seed=args.random_hh_seed,
                 kappa=args.kappa,
                 c=args.c,
                 alpha=args.alpha,

@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .model import CRPAdaptiveClassifier, CRPAdaptiveConfig
-from .schematics import CRPSchematic, base_schematic, feedforward_schematic
+from .schematics import (
+    CRPSchematic,
+    base_schematic,
+    feedforward_schematic,
+    random_density_schematic,
+)
 
 
 @dataclass(frozen=True)
@@ -23,8 +28,10 @@ class CRPAdaptiveSpec:
     bias: bool = True
     cfg: CRPAdaptiveConfig = field(default_factory=CRPAdaptiveConfig)
 
-    schematic: str = "base"  # "base" | "feedforward"
+    schematic: str = "base"  # "base" | "feedforward" | "random_density"
     num_hidden_layers: int = 2  # only used for feedforward
+    random_hh_density: float = 0.5  # only for random_density
+    random_hh_seed: Optional[int] = None  # only for random_density
 
 
 def build_crp_adaptive(
@@ -57,6 +64,14 @@ def build_crp_adaptive(
                 hidden_dim=spec.hidden_dim,
                 num_classes=num_classes,
                 num_hidden_layers=spec.num_hidden_layers,
+            )
+        elif name == "random_density":
+            schematic = random_density_schematic(
+                input_dim=input_dim,
+                hidden_dim=spec.hidden_dim,
+                num_classes=num_classes,
+                hh_density=spec.random_hh_density,
+                hh_seed=spec.random_hh_seed,
             )
         else:
             raise ValueError(f"Unknown CRP schematic: {spec.schematic!r}")

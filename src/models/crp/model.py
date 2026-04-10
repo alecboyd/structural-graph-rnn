@@ -143,6 +143,12 @@ class CRPClassifier(nn.Module):
 
         # Weighted norm vector for recurrent normalization (used when enabled).
         self.register_buffer("w_inf", torch.ones(self.hidden_dim))
+        self._last_norm_stats: Dict[str, float] = {
+            "m": float("nan"),
+            "scale": 1.0,
+            "c": float(self.cfg.c),
+            "shrunk": 0.0,
+        }
 
         # Trainable raw weights (masked later)
         self.RIH = nn.Parameter(torch.empty(self.input_dim, self.hidden_dim))
@@ -213,7 +219,7 @@ class CRPClassifier(nn.Module):
             w = A @ w
             w = w / w.max().clamp_min(eps)
             w = w.clamp_min(eps)
-        self.w_inf = w
+        self.w_inf.copy_(w)
 
     @torch.no_grad()
     def update_normalization_cache(self) -> None:
@@ -246,7 +252,16 @@ class CRPClassifier(nn.Module):
         else:
             raise ValueError(f"Unknown recurrent_norm: {mode!r}")
 
-        scale = min(1.0, c / m)
+        one = torch.ones_like(m)
+        scale = torch.minimum(one, torch.tensor(c, device=m.device, dtype=m.dtype) / m)
+        scale_f = float(scale.item())
+        m_f = float(m.item())
+        self._last_norm_stats = {
+            "m": m_f,
+            "scale": scale_f,
+            "c": c,
+            "shrunk": 1.0 if scale_f < (1.0 - 1e-12) else 0.0,
+        }
         return RH_masked * scale
 
     def _build_weights(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -381,5 +396,25 @@ class CRPClassifier(nn.Module):
             "certified": certified,
             "steps_used": t_max,
             "rho": torch.tensor(rho, device=device, dtype=dtype),
+            "recurrent_scale": torch.tensor(
+                float(self._last_norm_stats.get("scale", 1.0)),
+                device=device,
+                dtype=dtype,
+            ),
+            "recurrent_shrunk": torch.tensor(
+                float(self._last_norm_stats.get("shrunk", 0.0)),
+                device=device,
+                dtype=dtype,
+            ),
+            "recurrent_norm_m": torch.tensor(
+                float(self._last_norm_stats.get("m", float("nan"))),
+                device=device,
+                dtype=dtype,
+            ),
+            "recurrent_norm_c": torch.tensor(
+                float(self._last_norm_stats.get("c", c)),
+                device=device,
+                dtype=dtype,
+            ),
         }
         return logits_tau, aux

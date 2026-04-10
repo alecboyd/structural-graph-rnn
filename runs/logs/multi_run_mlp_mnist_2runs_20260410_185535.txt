@@ -1,0 +1,19 @@
+MULTI-RUN TRAINING
+timestamp=2026-04-10T18:55:00
+num_runs=2
+config=ExperimentConfig(model_id='mlp', dataset='mnist', data_dir='./data', artifacts_dir='./runs', train=TrainLoopConfig(epochs=1, lr=0.001, weight_decay=0.0, batch_size=2048, num_workers=0, device='cpu', seed=None), mlp=MLPModelConfig(hidden_dim=64, num_hidden_layers=1), crp=None, crp_adaptive=None, mlp_adaptive=None, input_dim=None, num_classes=None, init_type='kaiming_uniform', activation='leaky_relu', negative_slope=0.05)
+
+config: init_type=kaiming_uniform activation=leaky_relu negative_slope=0.0500
+epoch 001 | train_loss=1.1075 | val_loss=0.5170 | val_acc=0.8480
+TEST | loss=0.4863 | acc=0.8574
+
+config: init_type=kaiming_uniform activation=leaky_relu negative_slope=0.0500
+epoch 001 | train_loss=1.1150 | val_loss=0.4705 | val_acc=0.8555
+TEST | loss=0.4674 | acc=0.8630
+
+AGGREGATE METRICS (across runs):
+final_train_loss: mean=1.111243 std=0.003741 var=0.000014 min=1.107502 q25=1.109373 median=1.111243 q75=1.113114 max=1.114984
+final_val_acc: mean=0.851750 std=0.003750 var=0.000014 min=0.848000 q25=0.849875 median=0.851750 q75=0.853625 max=0.855500
+final_val_loss: mean=0.493756 std=0.023209 var=0.000539 min=0.470548 q25=0.482152 median=0.493756 q75=0.505361 max=0.516965
+test_acc: mean=0.860200 std=0.002800 var=0.000008 min=0.857400 q25=0.858800 median=0.860200 q75=0.861600 max=0.863000
+test_loss: mean=0.476843 std=0.009440 var=0.000089 min=0.467403 q25=0.472123 median=0.476843 q75=0.481563 max=0.486284

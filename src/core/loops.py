@@ -41,26 +41,58 @@ def _extract_aux_metrics(aux: AuxDict) -> Dict[str, float]:
     Supported aux keys:
     - ``tau``: integer convergence/certification step per sample.
     - ``certified``: boolean certification indicator per sample.
+    - ``recurrent_scale``: realized recurrent normalization factor.
+    - ``recurrent_shrunk``: indicator that recurrent normalization shrank W_H.
+    - ``recurrent_norm_m``: pre-scaling recurrent norm value m.
+    - ``recurrent_norm_c``: target contraction cap c.
+    - ``rho``: contraction factor used by CRP dynamics.
 
     Returns:
     - A dict containing sums and counts used for streaming epoch metrics.
     """
     metrics: Dict[str, float] = {}
 
-    tau = aux.get("tau", None)
-    certified = aux.get("certified", None)
+    def add(key_out: str, value) -> None:
+        if value is None:
+            return
+        if torch.is_tensor(value):
+            t = value.detach().float()
+            metrics[f"{key_out}_sum"] = float(t.sum().item())
+            metrics[f"{key_out}_count"] = float(t.numel())
+            return
+        if isinstance(value, (bool, int, float)):
+            metrics[f"{key_out}_sum"] = float(value)
+            metrics[f"{key_out}_count"] = 1.0
 
-    if tau is not None:
-        t = tau.detach().float()
-        metrics["tau_sum"] = float(t.sum().item())
-        metrics["tau_count"] = float(t.numel())
-
-    if certified is not None:
-        c = certified.detach().float()
-        metrics["cert_sum"] = float(c.sum().item())
-        metrics["cert_count"] = float(c.numel())
+    add("tau", aux.get("tau", None))
+    add("cert", aux.get("certified", None))
+    add("recurrent_scale", aux.get("recurrent_scale", None))
+    add("recurrent_shrunk", aux.get("recurrent_shrunk", None))
+    add("recurrent_norm_m", aux.get("recurrent_norm_m", None))
+    add("recurrent_norm_c", aux.get("recurrent_norm_c", None))
+    add("rho", aux.get("rho", None))
 
     return metrics
+
+
+def _finalize_aux_epoch_metrics(sums: Dict[str, float], counts: Dict[str, float]) -> Dict[str, float]:
+    """Convert accumulated aux sums/counts into stable epoch-level metrics."""
+    out: Dict[str, float] = {}
+    if counts.get("cert", 0.0) > 0:
+        out["cert_rate"] = sums["cert"] / counts["cert"]
+    if counts.get("tau", 0.0) > 0:
+        out["tau_mean"] = sums["tau"] / counts["tau"]
+    if counts.get("recurrent_scale", 0.0) > 0:
+        out["recurrent_scale_mean"] = sums["recurrent_scale"] / counts["recurrent_scale"]
+    if counts.get("recurrent_shrunk", 0.0) > 0:
+        out["recurrent_shrink_rate"] = sums["recurrent_shrunk"] / counts["recurrent_shrunk"]
+    if counts.get("recurrent_norm_m", 0.0) > 0:
+        out["recurrent_norm_m_mean"] = sums["recurrent_norm_m"] / counts["recurrent_norm_m"]
+    if counts.get("recurrent_norm_c", 0.0) > 0:
+        out["recurrent_norm_c_mean"] = sums["recurrent_norm_c"] / counts["recurrent_norm_c"]
+    if counts.get("rho", 0.0) > 0:
+        out["rho_mean"] = sums["rho"] / counts["rho"]
+    return out
 
 
 def train_one_epoch(
@@ -89,10 +121,24 @@ def train_one_epoch(
     total_loss = 0.0
     n = 0
 
-    tau_sum = 0.0
-    tau_count = 0.0
-    cert_sum = 0.0
-    cert_count = 0.0
+    aux_sums = {
+        "tau": 0.0,
+        "cert": 0.0,
+        "recurrent_scale": 0.0,
+        "recurrent_shrunk": 0.0,
+        "recurrent_norm_m": 0.0,
+        "recurrent_norm_c": 0.0,
+        "rho": 0.0,
+    }
+    aux_counts = {
+        "tau": 0.0,
+        "cert": 0.0,
+        "recurrent_scale": 0.0,
+        "recurrent_shrunk": 0.0,
+        "recurrent_norm_m": 0.0,
+        "recurrent_norm_c": 0.0,
+        "rho": 0.0,
+    }
 
     for x, y in loader:
         x = x.to(device)
@@ -121,16 +167,11 @@ def train_one_epoch(
         n += bsz
 
         m = _extract_aux_metrics(aux)
-        tau_sum += m.get("tau_sum", 0.0)
-        tau_count += m.get("tau_count", 0.0)
-        cert_sum += m.get("cert_sum", 0.0)
-        cert_count += m.get("cert_count", 0.0)
+        for name in aux_sums.keys():
+            aux_sums[name] += m.get(f"{name}_sum", 0.0)
+            aux_counts[name] += m.get(f"{name}_count", 0.0)
 
-    metrics: Dict[str, float] = {}
-    if cert_count > 0:
-        metrics["cert_rate"] = cert_sum / cert_count
-    if tau_count > 0:
-        metrics["tau_mean"] = tau_sum / tau_count
+    metrics = _finalize_aux_epoch_metrics(aux_sums, aux_counts)
 
     return total_loss / max(n, 1), metrics
 
@@ -156,10 +197,24 @@ def eval_one_epoch(
     total_acc = 0.0
     n = 0
 
-    tau_sum = 0.0
-    tau_count = 0.0
-    cert_sum = 0.0
-    cert_count = 0.0
+    aux_sums = {
+        "tau": 0.0,
+        "cert": 0.0,
+        "recurrent_scale": 0.0,
+        "recurrent_shrunk": 0.0,
+        "recurrent_norm_m": 0.0,
+        "recurrent_norm_c": 0.0,
+        "rho": 0.0,
+    }
+    aux_counts = {
+        "tau": 0.0,
+        "cert": 0.0,
+        "recurrent_scale": 0.0,
+        "recurrent_shrunk": 0.0,
+        "recurrent_norm_m": 0.0,
+        "recurrent_norm_c": 0.0,
+        "rho": 0.0,
+    }
 
     for x, y in loader:
         x = x.to(device)
@@ -174,15 +229,10 @@ def eval_one_epoch(
         n += bsz
 
         m = _extract_aux_metrics(aux)
-        tau_sum += m.get("tau_sum", 0.0)
-        tau_count += m.get("tau_count", 0.0)
-        cert_sum += m.get("cert_sum", 0.0)
-        cert_count += m.get("cert_count", 0.0)
+        for name in aux_sums.keys():
+            aux_sums[name] += m.get(f"{name}_sum", 0.0)
+            aux_counts[name] += m.get(f"{name}_count", 0.0)
 
-    metrics: Dict[str, float] = {}
-    if cert_count > 0:
-        metrics["cert_rate"] = cert_sum / cert_count
-    if tau_count > 0:
-        metrics["tau_mean"] = tau_sum / tau_count
+    metrics = _finalize_aux_epoch_metrics(aux_sums, aux_counts)
 
     return total_loss / max(n, 1), total_acc / max(n, 1), metrics

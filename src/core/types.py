@@ -48,8 +48,10 @@ class CRPModelConfig:
     """
 
     hidden_dim: int = 256
-    schematic: str = "base"  # "base" | "feedforward"
+    schematic: str = "base"  # "base" | "feedforward" | "random_density"
     num_hidden_layers: int = 2
+    random_hh_density: float = 0.5
+    random_hh_seed: Optional[int] = None
 
     kappa: float = 1.0
     c: float = 0.95
@@ -68,8 +70,10 @@ class CRPAdaptiveModelConfig:
     """Configuration for CRPAdaptive model construction and DeepR controls."""
 
     hidden_dim: int = 256
-    schematic: str = "base"  # "base" | "feedforward"
+    schematic: str = "base"  # "base" | "feedforward" | "random_density"
     num_hidden_layers: int = 2
+    random_hh_density: float = 0.5
+    random_hh_seed: Optional[int] = None
 
     kappa: float = 1.0
     c: float = 0.95

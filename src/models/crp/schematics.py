@@ -39,6 +39,14 @@ def _edges_from_mask(mask: torch.Tensor) -> torch.Tensor:
     return mask.nonzero(as_tuple=False)
 
 
+def _generator_from_seed(seed: Optional[int]) -> Optional[torch.Generator]:
+    if seed is None:
+        return None
+    g = torch.Generator()
+    g.manual_seed(int(seed))
+    return g
+
+
 def base_schematic(*, input_dim: int, hidden_dim: int, num_classes: int) -> CRPSchematic:
     """
     Build a fully connected CRP schematic using all-ones masks.
@@ -102,6 +110,54 @@ def feedforward_schematic(
     return CRPSchematic(
         name="feedforward",
         dag=True,
+        MIH=MIH,
+        MH=MH,
+        MHL=MHL,
+        MIH_edges=_edges_from_mask(MIH),
+        MH_edges=_edges_from_mask(MH),
+        MHL_edges=_edges_from_mask(MHL),
+    )
+
+
+def random_density_schematic(
+    *,
+    input_dim: int,
+    hidden_dim: int,
+    num_classes: int,
+    hh_density: float,
+    hh_seed: Optional[int] = None,
+) -> CRPSchematic:
+    """
+    Build CRP masks with full IH/HL connectivity and random HH density.
+
+    Behavior:
+    - ``MIH`` is fully connected (all ones).
+    - ``MHL`` is fully connected (all ones).
+    - ``MH`` activates exactly ``round(hh_density * hidden_dim^2)`` entries,
+      sampled uniformly without replacement.
+    """
+    if hidden_dim <= 0:
+        raise ValueError("hidden_dim must be > 0")
+    if not (0.0 <= float(hh_density) <= 1.0):
+        raise ValueError(f"hh_density must be in [0, 1], got {hh_density}")
+
+    MIH = torch.ones(input_dim, hidden_dim)
+    MHL = torch.ones(hidden_dim, num_classes)
+
+    total_hh = hidden_dim * hidden_dim
+    active_hh = int(round(float(hh_density) * total_hh))
+    active_hh = max(0, min(active_hh, total_hh))
+
+    MH = torch.zeros(hidden_dim, hidden_dim)
+    if active_hh > 0:
+        gen = _generator_from_seed(hh_seed)
+        perm = torch.randperm(total_hh, generator=gen)
+        idx = perm[:active_hh]
+        MH.view(-1)[idx] = 1.0
+
+    return CRPSchematic(
+        name="random_density",
+        dag=False,
         MIH=MIH,
         MH=MH,
         MHL=MHL,

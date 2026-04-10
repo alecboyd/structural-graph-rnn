@@ -10,10 +10,12 @@ from src.models.crp.schematics import (
     CRPSchematic,
     base_schematic,
     feedforward_schematic,
+    random_density_schematic,
 )
 
 __all__ = [
     "CRPSchematic",
     "base_schematic",
     "feedforward_schematic",
+    "random_density_schematic",
 ]
